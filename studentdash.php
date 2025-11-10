@@ -1,17 +1,59 @@
 <?php
 session_start();
 include("include/dbconnect.php");
-$user_id = $_SESSION['user_id'] ?? null;
 
-$student = null;
-//fetch the profile if its exists
-if ($user_id) {
-    $query = $conn->prepare("SELECT * FROM students WHERE user_id = ?");
-    $query->bind_param("i", $user_id);
-    $query->execute();
-    $result = $query->get_result();
-    $student = $result->fetch_assoc();
+// Make sure student is logged in
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 1) {
+    header("Location: signin.php");
+    exit();
 }
+
+$user_id = $_SESSION['user_id'];
+
+// Fetch student details, including course ID and course name
+$stmt = $conn->prepare("
+    SELECT s.faculty_id, s.course_id, s.status, s.year_of_study,
+           u.firstName, u.lastName, u.email,
+           c.course_name
+    FROM students s
+    JOIN users u ON s.user_id = u.user_id
+    JOIN course c ON s.course_id = c.course_id
+    WHERE s.user_id = ?
+");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$student = $result->fetch_assoc();
+
+// If no faculty yet (first login), force profile completion
+if (empty($student['faculty_id'])) {
+    header("Location: student_complete_profile.php");
+    exit();
+}
+
+// Get faculty name
+$facultyName = "Unknown";
+if (!empty($student['faculty_id'])) {
+    $fstmt = $conn->prepare("SELECT faculty_name FROM faculty WHERE faculty_id = ?");
+    $fstmt->bind_param("i", $student['faculty_id']);
+    $fstmt->execute();
+    $fresult = $fstmt->get_result();
+    if ($frow = $fresult->fetch_assoc()) {
+        $facultyName = $frow['faculty_name'];
+    }
+}
+
+// Fetch units based on student's course ID and year
+$courseId = $student['course_id'];
+$year = $student['year_of_study'];
+
+$unitStmt = $conn->prepare("SELECT u.unit_name
+    FROM units u
+    WHERE u.course_id = ? AND u.year_of_study = ?
+");
+$unitStmt->bind_param("ii", $courseId, $year);
+$unitStmt->execute();
+$unitResult = $unitStmt->get_result();
 ?>
 
 <!DOCTYPE html>
@@ -20,121 +62,158 @@ if ($user_id) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Student Dashboard</title>
-  <!-- Font Awesome icons for profile icon -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
-  <!-- This is your merged CSS with nav, banner, and card styles -->
-  <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="studentdash.css" />
 </head>
 <body>
-
-<!-- NAVIGATION BAR -->
-<nav>
-  <div class="navigation">
-    <!-- Left side nav links -->
+  <nav class="navbar">
     <div class="nav-left">
       <ul>
         <li><a href="studentdash.php">Dashboard</a></li>
-        <li><a href="about.html">About</a></li>
-        <li><a href="select.html">Submit</a></li>
       </ul>
     </div>
-    <!-- Profile icon and dropdown -->
-    <div class="profile" id="profileArea">
-      <div class="profile-icon" id="profileIcon"></div>
-      <div class="dropdown" id="dropdownMenu">
-        <a href="signin.php">Log Out</a>
-      </div>
+    <div class="nav-right">
+      <a href="signin.php" class="logout-btn">Log Out</a>
+    </div>
+  </nav>
+
+  <div class="banner">
+    <h2>Welcome, <?= htmlspecialchars($student['firstName']) ?>!</h2>
+  </div>
+
+  <p>Faculty: <?= htmlspecialchars($facultyName) ?> | Course: <?= htmlspecialchars($student['course_name']) ?> | Year: <?= htmlspecialchars($year) ?></p>
+  <p>Status: <?= htmlspecialchars($student['status']) ?></p>
+
+  <div class="cards-container">
+    <!-- View Profile Card -->
+    <div class="card">
+      <h3>View and Update Profile</h3>
+      <button id="openProfileBtn">View Profile</button>
+    </div>
+
+     <div class="card">
+      <h3>Register Units</h3>
+      <a href="register_units.php" class="card-btn">Register</a>
+    </div>
+
+    <!-- Submit Personalized Feedback -->
+    <div class="card">
+      <h3>Submit Personalized Feedback</h3>
+      <a href="student_feedback.php" class="card-btn">Submit</a>
+    </div>
+
+    <!-- Fill Feedback Form -->
+    <div class="card">
+      <h3>Fill Feedback Form</h3>
+      <a href="student_view_forms.php" class="card-btn">Fill Form</a>
+    </div>
+
+    <!-- View Lecturer Responses -->
+    <div class="card">
+      <h3>View Feedback Responses</h3>
+      <a href="student_view_responses.php" class="card-btn">Go</a>
+    </div>
+
+    <!-- Display My Units -->
+    <div class="card full-width">
+      <h3>My Units (Year <?= htmlspecialchars($year) ?>)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Unit Name</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php 
+          $count = 1;
+          while ($unit = $unitResult->fetch_assoc()): ?>
+            <tr>
+              <td><?= $count++ ?></td>
+              <td><?= htmlspecialchars($unit['unit_name']) ?></td>
+            </tr>
+          <?php endwhile; ?>
+          <?php if ($count === 1): ?>
+            <tr><td colspan="2">No units found for your year and course.</td></tr>
+          <?php endif; ?>
+        </tbody>
+      </table>
     </div>
   </div>
-</nav>
 
-<!-- This script makes the dropdown open/close -->
-<script>
-const profileIcon = document.getElementById("profileIcon");
-const dropdownMenu = document.getElementById("dropdownMenu");
-const profileArea = document.getElementById("profileArea");
-
-profileIcon.addEventListener("click", () => {
-  dropdownMenu.style.display = dropdownMenu.style.display === "block" ? "none" : "block";
-});
-
-document.addEventListener("click", function(event) {
-  if (!profileArea.contains(event.target)) {
-    dropdownMenu.style.display = "none";
-  }
-});
-</script>
-
-<!-- BANNER SECTION -->
-<div class="banner">
-  <h1>WELCOME STUDENT</h1>
-</div>
-
-<!-- CARD CONTAINER -->
-<div class="card">
-  <div class="profile-section">
-    
-    <!-- Profile picture -->
-    <div class="profile-picture">
-      <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" alt="Profile" />
-      <!-- Upload button -->
-      <input type="file" name="profile_photo" id="profileUpload" hidden>
-      <label for="profileUpload" class="upload-btn">Upload Profile Photo</label>
-    </div>
-
-    <!-- Form fields -->
-    <div class="form-section">
-      <?php if (!$student): ?>
-        <h2>Create Your Profile</h2>
-      <form method="POST" action="submit.php" enctype="multipart/form-data">
-      
-      <div class="input-group">
+  <!-- Modal Popup -->
+  <div id="profileModal" class="modal">
+    <div class="modal-content">
+      <span class="closeBtn">&times;</span>
+      <h3>Update Profile</h3>
+      <form action="update_student_profile.php" method="post">
+        <div class="input-group">
           <label>First Name</label>
-          <input type="text" name="first_name" required>
+          <input type="text" name="firstName" value="<?= htmlspecialchars($student['firstName']) ?>" required>
         </div>
-
         <div class="input-group">
           <label>Last Name</label>
-          <input type="text" name="last_name" required>
+          <input type="text" name="lastName" value="<?= htmlspecialchars($student['lastName']) ?>" required>
         </div>
-
         <div class="input-group">
           <label>Email</label>
-          <input type="email" name="email" required>
+          <input type="email" name="email" value="<?= htmlspecialchars($student['email']) ?>" readonly>
         </div>
 
         <div class="input-group">
           <label>Faculty</label>
-          <input type="text" name="faculty_name" required>
+          <select name="faculty_id" required>
+            <option value="">Select Faculty</option>
+            <?php
+            $facQuery = $conn->query("SELECT faculty_id, faculty_name FROM faculty ORDER BY faculty_name");
+            while ($fac = $facQuery->fetch_assoc()):
+            ?>
+              <option value="<?= $fac['faculty_id'] ?>" <?= $student['faculty_id'] == $fac['faculty_id'] ? 'selected' : '' ?>>
+                <?= htmlspecialchars($fac['faculty_name']) ?>
+              </option>
+            <?php endwhile; ?>
+          </select>
         </div>
-        <div class="input-group">
-          <label>Course</label>
-          <input type="text" name="student_course" required>
-        </div>
-        <div class="input-group">
-          <label>Year</label>
-          <input type="text" name="year_of_study" required>
-        </div>
-        <button type="submit" class="submit-btn">Save Profile</button>
-      </form>
 
-      <?php else: ?>
-        <h2>Your Profile</h2>
-        <div style="text-align:left;">
-          <p><strong>Name:</strong> <?= htmlspecialchars($student['first_name']) ?> <?= htmlspecialchars($student['last_name']) ?></p>
-          <p><strong>Email:</strong> <?= htmlspecialchars($student['email']) ?></p>
-          <p><strong>Faculty:</strong> <?= htmlspecialchars($student['faculty_name']) ?></p>
-          <p><strong>Course:</strong> <?= htmlspecialchars($student['student_course']) ?></p>
-          <p><strong>Year:</strong> <?= htmlspecialchars($student['year_of_study']) ?></p>
+        <div class="input-group">
+  <label>Course</label>
+  <select name="course_id" required>
+    <option value="">Select Course</option>
+    <?php
+    $coQuery = $conn->query("SELECT course_id, course_name FROM course ORDER BY course_name");
+    while ($course = $coQuery->fetch_assoc()):
+    ?>
+      <option value="<?= $course['course_id'] ?>" <?= $student['course_id'] == $course['course_id'] ? 'selected' : '' ?>>
+        <?= htmlspecialchars($course['course_name']) ?>
+      </option>
+    <?php endwhile; ?>
+  </select>
+</div>
+
+        <div class="input-group">
+          <label>Year of Study</label>
+          <select name="year_of_study" required>
+            <option value="1" <?= $year == 1 ? 'selected' : '' ?>>Year 1</option>
+            <option value="2" <?= $year == 2 ? 'selected' : '' ?>>Year 2</option>
+            <option value="3" <?= $year == 3 ? 'selected' : '' ?>>Year 3</option>
+            <option value="4" <?= $year == 4 ? 'selected' : '' ?>>Year 4</option>
+          </select>
         </div>
-        <form method="GET" action="edit_profile.php">
-          <button class="submit-btn" style="margin-top: 15px;">Update Information</button>
-        </form>
-        <?php endif; ?>
+
+        <button type="submit">Update Profile</button>
+      </form>
+      <p class="note">*Updates will require system admin approval.</p>
     </div>
   </div>
-</div>
 
-</div>
+  <script>
+    const modal = document.getElementById("profileModal");
+    const btn = document.getElementById("openProfileBtn");
+    const span = document.getElementsByClassName("closeBtn")[0];
+    btn.onclick = () => modal.style.display = "block";
+    span.onclick = () => modal.style.display = "none";
+    window.onclick = (event) => {
+      if (event.target == modal) modal.style.display = "none";
+    };
+  </script>
 </body>
 </html>

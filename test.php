@@ -1,133 +1,114 @@
 <?php
-// Start session + DB connect
 session_start();
 include("include/dbconnect.php");
 
-// Check if user ID is set in session
-$user_id = $_SESSION['user_id'] ?? null;
-
-// Default: no student profile
-$student = null;
-
-if ($user_id) {
-    // Fetch existing profile if logged in
-    $query = $conn->prepare("SELECT * FROM students WHERE user_id = ?");
-    $query->bind_param("i", $user_id);
-    $query->execute();
-    $result = $query->get_result();
-    $student = $result->fetch_assoc();
+// Make sure a lecturer is logged in
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] != 2) {
+    header("Location: signin.php");
+    exit();
 }
-?>
 
+$user_id = $_SESSION['user_id'];
+
+// Fetch lecturer info
+$stmt = $conn->prepare("
+    SELECT l.faculty_name, l.course_taught, l.unit_taught, l.verification_status,
+           u.firstName, u.lastName, u.email
+    FROM lecturers l
+    JOIN users u ON l.user_id = u.user_id
+    WHERE l.user_id = ?
+");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$result = $stmt->get_result();
+$data = $result->fetch_assoc();
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Student Dashboard</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
-  <link rel="stylesheet" href="dashboard.css">
+  <title>Lecturer Dashboard</title>
+  <link rel="stylesheet" href="lec_dashboard.css" />
 </head>
 <body>
-
-<!-- Navigation -->
-<nav>
-  <div class="navigation">
-    <div class="nav-left">
-      <ul>
-        <li><a href="studentdash.php">Dashboard</a></li>
-        <li><a href="about.html">About</a></li>
-        <li><a href="select.html">Submit</a></li>
-      </ul>
-    </div>
-    <div class="profile" id="profileArea">
-      <div class="profile-icon" id="profileIcon"></div>
-      <div class="dropdown" id="dropdownMenu">
-        <a href="logout.php">Log Out</a>
-      </div>
-    </div>
+<nav class="navbar">
+  <div class="nav-left">
+    <h2>Lecturer Dashboard</h2>
+  </div>
+  <div class="nav-right">
+    <a href="signin.php" class="logout-btn">Log Out</a>
   </div>
 </nav>
 
-<!-- Dropdown toggle script -->
-<script>
-const profileIcon = document.getElementById("profileIcon");
-const dropdownMenu = document.getElementById("dropdownMenu");
-const profileArea = document.getElementById("profileArea");
+<div class="dashboard">
+  <div class="card">
+    <h3>Update Profile</h3>
+    <p>Update your details</p>
+    <button id="updateProfileBtn">Update Profile</button>
+  </div>
 
-profileIcon.addEventListener("click", () => {
-  dropdownMenu.style.display = dropdownMenu.style.display === "block" ? "none" : "block";
-});
+  <div class="card">
+    <h3>Status</h3>
+    <p>Your verification status is: <strong><?= htmlspecialchars($data['verification_status']) ?></strong></p>
+  </div>
 
-document.addEventListener("click", function(event) {
-  if (!profileArea.contains(event.target)) {
-    dropdownMenu.style.display = "none";
-  }
-});
-</script>
-
-<!-- Banner -->
-<div class="banner">
-  <h1>WELCOME STUDENT</h1>
-</div>
-
-<!-- Profile Card -->
-<div class="card">
-  <div class="profile-section">
-
-    <div class="profile-picture">
-      <img src="<?= $student['profile_photo'] ?? 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' ?>" alt="Profile" />
-      <?php if (!$student): ?>
-        <input type="file" name="profile_photo" id="profileUpload" hidden>
-        <label for="profileUpload" class="upload-btn">Upload Profile</label>
-      <?php endif; ?>
-    </div>
-
-    <div class="form-section">
-      <?php if (!$student): ?>
-        <form method="POST" action="submit.php" enctype="multipart/form-data">
-          <div class="input-group">
-            <label>First Name</label>
-            <input type="text" name="first_name" required>
-          </div>
-          <div class="input-group">
-            <label>Last Name</label>
-            <input type="text" name="last_name" required>
-          </div>
-          <div class="input-group">
-            <label>Email</label>
-            <input type="email" name="email" required>
-          </div>
-          <div class="input-group">
-            <label>Faculty</label>
-            <input type="text" name="faculty_name" required>
-          </div>
-          <div class="input-group">
-            <label>Course</label>
-            <input type="text" name="student_course" required>
-          </div>
-          <div class="input-group">
-            <label>Year</label>
-            <input type="text" name="year_of_study" required>
-          </div>
-          <button type="submit" class="submit-btn">Save Student</button>
-        </form>
-      <?php else: ?>
-        <div style="text-align:left;">
-          <p><strong>Name:</strong> <?= htmlspecialchars($student['first_name']) ?> <?= htmlspecialchars($student['last_name']) ?></p>
-          <p><strong>Email:</strong> <?= htmlspecialchars($student['email']) ?></p>
-          <p><strong>Faculty:</strong> <?= htmlspecialchars($student['faculty_name']) ?></p>
-          <p><strong>Course:</strong> <?= htmlspecialchars($student['student_course']) ?></p>
-          <p><strong>Year:</strong> <?= htmlspecialchars($student['year_of_study']) ?></p>
-        </div>
-        <form method="GET" action="edit_profile.php">
-          <button class="submit-btn" style="margin-top: 15px;">Update Information</button>
-        </form>
-      <?php endif; ?>
-    </div>
-
+  <div class="card">
+    <h3>View Submissions</h3>
+    <p>Review your submitted work.</p>
+    <button onclick="window.location.href='view_submissions.php'">View Submissions</button>
   </div>
 </div>
 
+<!-- Modal, hidden by default -->
+<div id="profileModal" class="modal">
+  <div class="modal-content">
+    <span class="close">&times;</span>
+    <h3>Update Profile</h3>
+    <form action="update_lecturer_profile.php" method="post">
+      <div class="input-group">
+        <label>Name</label>
+        <input type="text" name="name" value="<?= htmlspecialchars($data['firstName'] . ' ' . $data['lastName']) ?>" readonly>
+      </div>
+      <div class="input-group">
+        <label>Email</label>
+        <input type="email" name="email" value="<?= htmlspecialchars($data['email']) ?>" readonly>
+      </div>
+      <div class="input-group">
+        <label>Faculty</label>
+        <input type="text" name="faculty_name" value="<?= htmlspecialchars($data['faculty_name']) ?>" required>
+      </div>
+      <div class="input-group">
+        <label>Courses Taught</label>
+        <textarea name="course_taught" required><?= htmlspecialchars($data['course_taught']) ?></textarea>
+      </div>
+      <div class="input-group">
+        <label>Units Taught</label>
+        <textarea name="unit_taught" required><?= htmlspecialchars($data['unit_taught']) ?></textarea>
+      </div>
+      <button type="submit" class="save-btn">Save Changes</button>
+    </form>
+  </div>
+</div>
+
+<script>
+const updateProfileBtn = document.getElementById("updateProfileBtn");
+const modal = document.getElementById("profileModal");
+const closeBtn = document.querySelector(".close");
+
+updateProfileBtn.onclick = () => {
+  modal.style.display = "flex";
+};
+
+closeBtn.onclick = () => {
+  modal.style.display = "none";
+};
+
+window.onclick = (e) => {
+  if (e.target === modal) {
+    modal.style.display = "none";
+  }
+};
+</script>
 </body>
 </html>
